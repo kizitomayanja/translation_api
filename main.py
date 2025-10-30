@@ -47,10 +47,10 @@ app = FastAPI(title="Translation API", description="API for translations using G
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    # allow_origins=["https://your-nextjs-app.vercel.app", "http://localhost:3000"],  # Add your Next.js app’s domains
-    # allow_credentials=True,
-    # allow_methods=["*"],
-    # allow_headers=["*"],
+    allow_origins=["https://your-nextjs-app.vercel.app", "http://localhost:3000"],  # Add your Next.js app’s domains
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Health check endpoint
