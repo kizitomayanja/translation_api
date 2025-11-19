@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
@@ -7,6 +7,7 @@ from gradio_client import Client
 import os
 import asyncio
 from functools import lru_cache
+import logging
 
 
 # Initialize Gradio client (lazy)
@@ -22,8 +23,11 @@ def _create_translator():
 
 def get_translator():
     try:
-        return _create_translator()
+        client = _create_translator()
+        logger.info("Gradio client initialized: %s", GRADIO_URL)
+        return client
     except Exception as e:
+        logger.exception("Failed to initialize Gradio client")
         raise RuntimeError(f"Failed to initialize Gradio client: {e}")
 
 # Input schema for translation endpoint
@@ -47,11 +51,16 @@ app = FastAPI(title="Translation API", description="API for translations using G
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://translate-app-web-ui.vercel.app/", "http://localhost:3000"],  # Add your Next.js app’s domains
+    allow_origins=["https://translate-app-web-ui.vercel.app", "http://localhost:3000"],  # remove trailing slash
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
+
+# explicit OPTIONS handler for serverless preflight
+@app.options("/translate")
+async def translate_options():
+    return Response(status_code=200)
 
 # Health check endpoint
 @app.get("/health")
@@ -64,7 +73,9 @@ async def translate(input: TranslationInput):
     try:
         client = get_translator()
     except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e))
+        # surface the error in logs (don't expose stack in prod)
+        logger.error("Translator init error: %s", e)
+        raise HTTPException(status_code=503, detail="Translation service unavailable")
 
     # Validate language codes
     if not validate_language(input.source_lang):
@@ -73,7 +84,6 @@ async def translate(input: TranslationInput):
         raise HTTPException(status_code=400, detail=f"Invalid target language code: {input.target_lang}")
 
     try:
-        # Run blocking network call off the event loop to reduce async blocking
         result = await asyncio.to_thread(
             client.predict,
             text=input.text,
@@ -87,7 +97,8 @@ async def translate(input: TranslationInput):
             "target_lang": input.target_lang
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Translation failed: {str(e)}")
+        logger.exception("predict() failed")
+        raise HTTPException(status_code=502, detail="Upstream translation failed")
 
 # Add a warm endpoint you can call on deploy to pre-initialize the client
 @app.post("/warm")
@@ -102,3 +113,6 @@ async def warm():
 @app.get("/")
 async def root():
     return {"message": "Welcome to the Translation API. Use /translate for translations or /health to check status."}
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("translation-api")
